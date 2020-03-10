@@ -27,21 +27,15 @@ struct vt_route {
 };
 
 struct minivtun_config {
-	unsigned reconnect_timeo;
-	unsigned keepalive_timeo;
-	unsigned health_assess_timeo;
 	char ifname[40];
 	unsigned tun_mtu;
 	const char *crypto_passwd;
 	const char *pid_file;
-	const char *health_file;
 	bool in_background;
-	bool wait_dns;
+	bool tap_mode;
 
 	char crypto_key[CRYPTO_MAX_KEY_SIZE];
 	const void *crypto_type;
-
-	bool tap_mode;
 
 	/* IPv4 address settings */
 	struct in_addr tun_in_local;
@@ -56,11 +50,33 @@ struct minivtun_config {
 	struct vt_route *vt_routes;
 
 	/* Client only configuration */
-	int vt_metric;
-	char vt_table[32];
+	bool wait_dns;
 	unsigned exit_after;
 	bool dynamic_link;
+	unsigned reconnect_timeo;
+	unsigned max_droprate;
+	unsigned max_rtt;
+	unsigned keepalive_interval;
+	unsigned health_assess_interval;
+	unsigned nr_stats_buckets;
+	const char *health_file;
+	unsigned vt_metric;
+	char vt_table[32];
 };
+
+/* Statistics data for health assess */
+struct stats_data {
+	unsigned total_echo_sent;
+	unsigned total_echo_rcvd;
+	unsigned long total_rtt_ms;
+};
+
+static inline void zero_stats_data(struct stats_data *st)
+{
+	st->total_echo_sent = 0;
+	st->total_echo_rcvd = 0;
+	st->total_rtt_ms = 0;
+}
 
 /* Status variables during VPN running */
 struct state_variables {
@@ -74,13 +90,14 @@ struct state_variables {
 	struct timeval last_echo_sent;
 	struct timeval last_echo_recv;
 	struct timeval last_health_assess;
+	bool is_link_ok;
+	bool health_based_link_up;
+
+	/* Health assess data */
 	bool has_pending_echo;
 	__be32 pending_echo_id;
-	/* Health assess data */
-	unsigned total_echo_sent;
-	unsigned total_echo_rcvd;
-	unsigned long total_rtt_ms;
-	bool is_link_ok;
+	struct stats_data *stats_buckets;
+	unsigned current_bucket;
 
 	/* *** Server specific *** */
 	struct sockaddr_inx local_addr;

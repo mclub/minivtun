@@ -19,19 +19,25 @@
 #include "minivtun.h"
 
 struct minivtun_config config = {
-	.keepalive_timeo = 7,
-	.reconnect_timeo = 45,
-	.health_assess_timeo = 100,
 	.ifname = "",
 	.tun_mtu = 1300,
 	.crypto_passwd = "",
 	.crypto_type = NULL,
 	.pid_file = NULL,
-	.health_file = NULL,
-	.tap_mode = false,
 	.in_background = false,
+	.tap_mode = false,
 	.wait_dns = false,
+	.exit_after = 0,
 	.dynamic_link = false,
+	.reconnect_timeo = 47,
+	.max_droprate = 100,
+	.max_rtt = 0,
+	.keepalive_interval = 7,
+	.health_assess_interval = 60,
+	.nr_stats_buckets = 3,
+	.health_file = NULL,
+	.vt_metric = 0,
+	.vt_table = "",
 };
 
 struct state_variables state = {
@@ -136,21 +142,6 @@ static void parse_virtual_route(const char *arg)
 	vt_route_add(af, &network, prefix, &gateway);
 }
 
-static int try_resolve_addr_pair(const char *addr_pair)
-{
-	struct sockaddr_inx inx;
-	char s_addr[50] = "";
-	int rc;
-
-	if ((rc = get_sockaddr_inx_pair(addr_pair, &inx)) < 0)
-		return 1;
-
-	inet_ntop(inx.sa.sa_family, addr_of_sockaddr(&inx), s_addr, sizeof(s_addr));
-	printf("[%s]:%u\n", s_addr, ntohs(port_of_sockaddr(&inx)));
-
-	return 0;
-}
-
 static void print_help(int argc, char *argv[])
 {
 	int i;
@@ -161,28 +152,32 @@ static void print_help(int argc, char *argv[])
 	printf("Options:\n");
 	printf("  -l, --local <ip:port>               local IP:port for server to listen\n");
 	printf("  -r, --remote <host:port>            host:port of server to connect (brace with [] for bare IPv6)\n");
-	printf("  -R, --resolve <host:port>           try to resolve a hostname\n");
+	printf("  -n, --ifname <ifname>               virtual interface name\n");
+	printf("  -m, --mtu <mtu>                     set MTU size, default: %u.\n", config.tun_mtu);
 	printf("  -a, --ipv4-addr <tun_lip/tun_rip>   pointopoint IPv4 pair of the virtual interface\n");
 	printf("                  <tun_lip/pfx_len>   IPv4 address/prefix length pair\n");
 	printf("  -A, --ipv6-addr <tun_ip6/pfx_len>   IPv6 address/prefix length pair\n");
-	printf("  -m, --mtu <mtu>                     set MTU size, default: %u.\n", config.tun_mtu);
-	printf("  -k, --keepalive <keepalive_timeo>   interval of keep-alive packets, default: %u\n", config.keepalive_timeo);
-	printf("  -n, --ifname <ifname>               virtual interface name\n");
+	printf("  -d, --daemon                        run as daemon process\n");
 	printf("  -p, --pidfile <pid_file>            PID file of the daemon\n");
+#ifdef __linux__
+	printf("  -E, --tap                           TAP mode\n");
+	printf("  -b, --mac <mac_address>             specify the MAC address of TAP interface\n");
+#endif
 	printf("  -e, --key <encryption_key>          shared password for data encryption\n");
 	printf("  -t, --type <encryption_type>        encryption type\n");
 	printf("  -v, --route <network/prefix>[=gw]   attached IPv4/IPv6 route on this link, can be multiple\n");
+	printf("  -w, --wait-dns                      wait for DNS resolve ready after service started\n");
+	printf("  -D, --dynamic-link                  dynamic link mode, not bring up until data received\n");
 	printf("  -M, --metric <metric>               metric of attached IPv4 routes\n");
 	printf("  -T, --table <table_name>            route table of the attached IPv4 routes\n");
 	printf("  -x, --exit-after <N>                force the client to exit after N seconds\n");
-	printf("  -D, --dynamic-link                  dynamic link mode, not bring up until data received\n");
-	printf("  -w, --wait-dns                      wait for DNS resolve ready after service started.\n");
-	printf("      --health-file <file_path>       file for writing real-time health data.\n");
-#ifdef __linux__
-	printf("  -E, --tap                           TAP mode\n");
-	printf("  -B, --mac <mac_address>             specify the MAC address of TAP interface\n");
-#endif
-	printf("  -d, --daemon                        run as daemon process\n");
+	printf("  -H, --health-file <file_path>       file for writing real-time health data\n");
+	printf("  -R, --reconnect-timeo <N>           maximum inactive time (seconds) before reconnect, default: %u\n", config.reconnect_timeo);
+	printf("  -K, --keepalive <N>                 seconds between keep-alive tests, default: %u\n", config.keepalive_interval);
+	printf("  -S, --health-assess <N>             seconds between health assess, default: %u\n", config.health_assess_interval);
+	printf("  -B, --stats-buckets <N>             health data buckets, default: %u\n", config.nr_stats_buckets);
+	printf("  -P, --max-droprate <1~100>          maximum allowed packet drop percentage, default: %u%%\n", config.max_droprate);
+	printf("  -X, --max-rtt <N>                   maximum allowed echo delay (ms), default: unlimited\n");
 	printf("  -h, --help                          print this help\n");
 	printf("Supported encryption algorithms:\n");
 	printf("  ");
@@ -198,36 +193,41 @@ int main(int argc, char *argv[])
 	const char *tap_mac_config = NULL;
 	const char *crypto_type = CRYPTO_DEFAULT_ALGORITHM;
 	int override_mtu = 0, opt;
+	struct timeval current;
 
 	static struct option long_opts[] = {
 		{ "local", required_argument, 0, 'l', },
 		{ "remote", required_argument, 0, 'r', },
-		{ "resolve", required_argument, 0, 'R', },
-		{ "health-file", required_argument, 0, 'H', },
 		{ "ipv4-addr", required_argument, 0, 'a', },
 		{ "ipv6-addr", required_argument, 0, 'A', },
-		{ "mtu", required_argument, 0, 'm', },
-		{ "keepalive", required_argument, 0, 'k', },
 		{ "ifname", required_argument, 0, 'n', },
+		{ "mtu", required_argument, 0, 'm', },
 		{ "pidfile", required_argument, 0, 'p', },
+		{ "daemon", no_argument, 0, 'd', },
+#ifdef __linux__
+		{ "tap", no_argument, 0, 'E', },
+		{ "mac", required_argument, 0, 'b', },
+#endif		
 		{ "key", required_argument, 0, 'e', },
 		{ "type", required_argument, 0, 't', },
 		{ "route", required_argument, 0, 'v', },
-		{ "metric", required_argument, 0, 'M', },
-		{ "table", required_argument, 0, 'T', },
+		{ "wait-dns", no_argument, 0, 'w', },
 		{ "exit-after", required_argument, 0, 'x', },
 		{ "dynamic-link", no_argument, 0, 'D', },
-#ifdef __linux__
-		{ "tap", no_argument, 0, 'E', },
-		{ "mac", required_argument, 0, 'B', },
-#endif
-		{ "daemon", no_argument, 0, 'd', },
-		{ "wait-dns", no_argument, 0, 'w', },
+		{ "reconnect", required_argument, 0, 'R', },
+		{ "keepalive", required_argument, 0, 'K', },
+		{ "health-assess", required_argument, 0, 'S', },
+		{ "stats-buckets", required_argument, 0, 'B', },
+		{ "health-file", required_argument, 0, 'H', },
+		{ "max-droprate", required_argument, 0, 'P', },
+		{ "max-rtt", required_argument, 0, 'X', },
+		{ "metric", required_argument, 0, 'M', },
+		{ "table", required_argument, 0, 'T', },
 		{ "help", no_argument, 0, 'h', },
 		{ 0, 0, 0, 0, },
 	};
 
-	while ((opt = getopt_long(argc, argv, "r:l:R:H:a:A:m:k:n:p:e:t:v:M:T:x:DEB:dwh",
+	while ((opt = getopt_long(argc, argv, "r:l:a:A:m:n:p:e:t:v:x:R:K:S:B:H:P:X:M:T:DEdwhb:",
 			long_opts, NULL)) != -1) {
 		switch (opt) {
 		case 'l':
@@ -236,31 +236,33 @@ int main(int argc, char *argv[])
 		case 'r':
 			peer_addr_pair = optarg;
 			break;
-		case 'R':
-			exit(try_resolve_addr_pair(optarg));
-			break;
-		case 'H':
-			config.health_file = optarg;
-			break;
 		case 'a':
 			tun_ip_config = optarg;
 			break;
 		case 'A':
 			tun_ip6_config = optarg;
 			break;
-		case 'm':
-			override_mtu = strtoul(optarg, NULL, 10);
-			break;
-		case 'k':
-			config.keepalive_timeo = (unsigned)strtoul(optarg, NULL, 10);
-			break;
 		case 'n':
 			strncpy(config.ifname, optarg, sizeof(config.ifname) - 1);
 			config.ifname[sizeof(config.ifname) - 1] = '\0';
 			break;
+		case 'm':
+			override_mtu = strtoul(optarg, NULL, 10);
+			break;
 		case 'p':
 			config.pid_file = optarg;
 			break;
+		case 'd':
+			config.in_background = true;
+			break;
+#ifdef __linux__
+		case 'E':
+			config.tap_mode = true;
+			break;
+		case 'b':
+			tap_mac_config = optarg;
+			break;
+#endif
 		case 'e':
 			config.crypto_passwd = optarg;
 			break;
@@ -270,32 +272,46 @@ int main(int argc, char *argv[])
 		case 'v':
 			parse_virtual_route(optarg);
 			break;
-		case 'M':
-			config.vt_metric = strtol(optarg, NULL, 0);
-			break;
-		case 'T':
-			strncpy(config.vt_table, optarg, sizeof(config.vt_table));
-			config.vt_table[sizeof(config.vt_table) - 1] = '\0';
+		case 'w':
+			config.wait_dns = true;
 			break;
 		case 'x':
-			config.exit_after = strtoul(optarg, NULL, 0);
+			config.exit_after = strtoul(optarg, NULL, 10);
 			break;
 		case 'D':
 			config.dynamic_link = true;
 			break;
-#ifdef __linux__
-		case 'E':
-			config.tap_mode = true;
+		case 'R':
+			config.reconnect_timeo = strtoul(optarg, NULL, 10);
+			break;
+		case 'K':
+			config.keepalive_interval = strtoul(optarg, NULL, 10);
+			break;
+		case 'S':
+			config.health_assess_interval = strtoul(optarg, NULL, 10);
 			break;
 		case 'B':
-			tap_mac_config = optarg;
+			config.nr_stats_buckets = strtoul(optarg, NULL, 10);
 			break;
-#endif
-		case 'd':
-			config.in_background = true;
+		case 'H':
+			config.health_file = optarg;
 			break;
-		case 'w':
-			config.wait_dns = true;
+		case 'P':
+			config.max_droprate = strtoul(optarg, NULL, 10);
+			if (config.max_droprate < 1 || config.max_droprate > 100) {
+				fprintf(stderr, "*** Acceptable '--max-droprate' values: 1~100.\n");
+				exit(1);
+			}
+			break;
+		case 'X':
+			config.max_rtt = strtoul(optarg, NULL, 10);
+			break;
+		case 'M':
+			config.vt_metric = strtoul(optarg, NULL, 10);
+			break;
+		case 'T':
+			strncpy(config.vt_table, optarg, sizeof(config.vt_table));
+			config.vt_table[sizeof(config.vt_table) - 1] = '\0';
 			break;
 		case 'h':
 			print_help(argc, argv);
@@ -315,7 +331,8 @@ int main(int argc, char *argv[])
 	}
 
 	/* Random seed */
-	srand(getpid());
+	gettimeofday(&current, NULL);
+	srand(current.tv_sec ^ current.tv_usec ^ getpid());
 
 	if (config.ifname[0] == '\0')
 		strcpy(config.ifname, "mv%d");
