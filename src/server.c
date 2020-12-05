@@ -537,8 +537,8 @@ static int network_receiving(void)
 		if (config.tap_mode) {
 			#ifdef __linux__
 			af = AF_MACADDR;
-			/* No ethernet packet is shorter than 12 bytes. */
-			if (out_dlen < MINIVTUN_MSG_IPDATA_OFFSET + 12)
+			/* No ethernet packet is shorter than 14 bytes. */
+			if (out_dlen < MINIVTUN_MSG_IPDATA_OFFSET + 14)
 				return 0;
 			nmsg->ipdata.proto = 0;
 			ip_dlen = out_dlen - MINIVTUN_MSG_IPDATA_OFFSET;
@@ -610,7 +610,7 @@ static int tunnel_receiving(void)
 		/* Ethernet frame */
 		#ifdef __linux__
 		af = AF_MACADDR;
-		if (ip_dlen < 12)
+		if (ip_dlen < 14)
 			return 0;
 		#else
 		return 0;
@@ -704,9 +704,14 @@ static int tunnel_receiving(void)
 int run_server(const char *loc_addr_pair)
 {
 	char s_loc_addr[50];
+	bool is_random_port = false;
 
-	if (get_sockaddr_inx_pair(loc_addr_pair, &state.local_addr) < 0) {
+	if (get_sockaddr_inx_pair(loc_addr_pair, &state.local_addr, &is_random_port) < 0) {
 		fprintf(stderr, "*** Cannot resolve address pair '%s'.\n", loc_addr_pair);
+		return -1;
+	}
+	if (is_random_port) {
+		fprintf(stderr, "*** Port range is not allowed for server.\n");
 		return -1;
 	}
 

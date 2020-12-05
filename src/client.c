@@ -98,8 +98,8 @@ static int network_receiving(void)
 	switch (nmsg->hdr.opcode) {
 	case MINIVTUN_MSG_IPDATA:
 		if (config.tap_mode) {
-			/* No ethernet packet is shorter than 12 bytes. */
-			if (out_dlen < MINIVTUN_MSG_IPDATA_OFFSET + 12)
+			/* No ethernet packet is shorter than 14 bytes. */
+			if (out_dlen < MINIVTUN_MSG_IPDATA_OFFSET + 14)
 				return 0;
 			ip_dlen = out_dlen - MINIVTUN_MSG_IPDATA_OFFSET;
 			nmsg->ipdata.proto = 0;
@@ -163,7 +163,7 @@ static int tunnel_receiving(void)
 	ip_dlen = (size_t)rc - sizeof(struct tun_pi);
 
 	if (config.tap_mode) {
-		if (ip_dlen < 12)
+		if (ip_dlen < 14)
 			return 0;
 	} else {
 		/* We only accept IPv4 or IPv6 frames. */

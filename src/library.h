@@ -101,7 +101,8 @@ static inline bool is_sockaddr_equal(const struct sockaddr_inx *a1,
 	return false;
 }
 
-int get_sockaddr_inx_pair(const char *pair, struct sockaddr_inx *sa);
+int get_sockaddr_inx_pair(const char *pair, struct sockaddr_inx *sa,
+		bool *is_random_port);
 int resolve_and_connect(const char *peer_addr_pair, struct sockaddr_inx *peer_addr);
 int tun_alloc(char *dev, bool tap_mode);
 
@@ -109,6 +110,7 @@ void ip_addr_add_ipv4(const char *ifname, struct in_addr *local,
 		struct in_addr *peer, int prefix);
 void ip_addr_add_ipv6(const char *ifname, struct in6_addr *local, int prefix);
 void ip_link_set_mtu(const char *ifname, unsigned mtu);
+void ip_link_set_txqueue_len(const char *ifname, unsigned qlen);
 void ip_link_set_updown(const char *ifname, bool up);
 void ip_route_add_ipvx(const char *ifname, int af, void *network, int prefix,
 		int metric, const char *table);
