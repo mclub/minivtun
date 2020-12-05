@@ -155,7 +155,9 @@ static void print_help(int argc, char *argv[])
 	printf("  -r, --remote <host:port>            host:port of server to connect (brace with [] for bare IPv6)\n");
 	printf("  -n, --ifname <ifname>               virtual interface name\n");
 	printf("  -m, --mtu <mtu>                     set MTU size, default: %u.\n", config.tun_mtu);
+#ifndef __APPLE__
 	printf("  -Q, --qlen <qlen>                   set TX queue length, default: %u\n", config.tun_qlen);
+#endif
 	printf("  -a, --ipv4-addr <tun_lip/tun_rip>   pointopoint IPv4 pair of the virtual interface\n");
 	printf("                  <tun_lip/pfx_len>   IPv4 address/prefix length pair\n");
 	printf("  -A, --ipv6-addr <tun_ip6/pfx_len>   IPv6 address/prefix length pair\n");
@@ -252,9 +254,11 @@ int main(int argc, char *argv[])
 		case 'm':
 			override_mtu = strtoul(optarg, NULL, 10);
 			break;
+#ifndef __APPLE__
 		case 'Q':
 			config.tun_qlen = strtoul(optarg, NULL, 10);
 			break;
+#endif
 		case 'p':
 			config.pid_file = optarg;
 			break;
@@ -429,7 +433,9 @@ int main(int argc, char *argv[])
 
 	/* Set proper MTU size, and link up */
 	ip_link_set_mtu(config.ifname, config.tun_mtu);
+#ifndef __APPLE__
 	ip_link_set_txqueue_len(config.ifname, config.tun_qlen);
+#endif
 	ip_link_set_updown(config.ifname, true);
 
 	if (enabled_encryption()) {
