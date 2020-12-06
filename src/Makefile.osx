@@ -5,12 +5,14 @@
 #
 
 ifeq ($(PREFIX),)
-PREFIX := $(shell [ -d /opt/local ] && echo /opt/local || echo /usr )
+PREFIX := $(shell [ -d /usr/local ] && echo /usr/local || echo /usr )
 endif
 
 CC ?= gcc
-CFLAGS += -Wall -I/opt/local/include
-LDFLAGS += -L/opt/local/lib -L/usr/local/lib
+CFLAGS += -Wall -I/opt/local/include -I/usr/local/include -I/usr/local/opt/openssl/include
+LDFLAGS += $(shell [ -d /opt/local/lib ] && echo -L/opt/local/lib || : )
+LDFLAGS += $(shell [ -d /usr/local/lib ] && echo -L/usr/local/lib || : )
+LDFLAGS += $(shell [ -d /usr/local/opt/openssl/lib ] && echo -L/usr/local/opt/openssl/lib || : )
 HEADERS = minivtun.h library.h list.h jhash.h
 
 minivtun: minivtun.o library.o server.o client.o
